@@ -2,15 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <title>AI Contrast Checker | WCAG Accessibility Tool for Designers</title>
+<title>AI Contrast Checker | WCAG Accessibility Tool for Designers</title>
 
-  <meta name="description"
-        content="AI-powered WCAG contrast checker for UI UX designers. Check color accessibility, contrast ratios, and get recommendations to improve readability and compliance." />
+<meta name="description"
+      content="AI-powered WCAG contrast checker for UI UX designers. Check color accessibility, contrast ratios, and get recommendations to improve readability and WCAG compliance." />
 
-  <meta name="keywords"
-        content="AI contrast checker, WCAG contrast checker, color contrast checker, accessibility checker, UI UX accessibility" />
+<meta name="keywords"
+      content="AI contrast checker, WCAG contrast checker, color contrast checker, accessibility checker, UI UX accessibility" />
+    
     
     <!-- Google Fonts Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -25,7 +26,7 @@
         --accent: #C8FF00;
         --fail: #FF4545;
         --body: #E0E0E0;
-        --muted: #666666;
+        --muted: #B5B5B5;
         --font: 'Inter', sans-serif;
       }
 
@@ -612,12 +613,10 @@
       <!-- 1. Header Section -->
       <header class="header">
         <div class="header-info">
-          <h1 class="app-title">ContrastAI</h1>
+          <h1 class="app-title">AI Contrast Checker</h1>
           <p class="app-tagline">WCAG contrast checker with AI-powered color fix suggestions</p>
         </div>
       </header>
-
-      <div class="section-border"></div>
 
       <!-- 2. Interactive Input Section -->
       <section class="inputs-grid">
@@ -667,8 +666,6 @@
         </div>
         <p id="explanation-text" class="explanation-text">Calculating contrast ratios...</p>
       </section>
-
-      <div class="section-border"></div>
 
       <!-- Sparkle section alert for AI warnings -->
       <div id="ai-status-alert" class="ai-status-alert" style="display: none;"></div>
@@ -907,33 +904,73 @@
         };
       }
 
-      function correctHexIfNeeded(suggestedHex, companionHex, isFgFix) {
+      function getCorrectedPair(suggestedHex, originalCompanion, isFgFix) {
         if (!suggestedHex.startsWith('#')) suggestedHex = '#' + suggestedHex;
         if (!/^[0-9A-Fa-f]{6}$/.test(suggestedHex.slice(1))) {
           suggestedHex = '#777777';
         }
-        
-        const ratio = parseFloat(contrastRatio(isFgFix ? suggestedHex : companionHex, isFgFix ? companionHex : suggestedHex));
+        if (!originalCompanion.startsWith('#')) originalCompanion = '#' + originalCompanion;
+
+        // Check if current suggestedHex against originalCompanion already passes 7.0
+        let ratio = parseFloat(contrastRatio(suggestedHex, originalCompanion));
         if (ratio >= 7.0) {
-          return suggestedHex;
+          return { suggestedHex, companionHex: originalCompanion };
         }
-        
+
+        // If not, let's first try to adjust only suggestedHex's lightness to find a match
         const suggHsl = hexToHsl(suggestedHex);
-        let bestHex = suggestedHex;
+        let bestSuggestedHex = suggestedHex;
+        let found = false;
         let minDiff = 999;
-        
+
         for (let l = 0; l <= 100; l += 1) {
           const candidateHex = hslToHex(suggHsl[0], suggHsl[1], l);
-          const r = parseFloat(contrastRatio(isFgFix ? candidateHex : companionHex, isFgFix ? companionHex : candidateHex));
+          const r = parseFloat(contrastRatio(isFgFix ? candidateHex : originalCompanion, isFgFix ? originalCompanion : candidateHex));
           if (r >= 7.0) {
             const diff = Math.abs(l - suggHsl[2]);
             if (diff < minDiff) {
               minDiff = diff;
-              bestHex = candidateHex;
+              bestSuggestedHex = candidateHex;
+              found = true;
             }
           }
         }
-        return bestHex;
+
+        if (found) {
+          return { suggestedHex: bestSuggestedHex, companionHex: originalCompanion };
+        }
+
+        // If even adjusting suggestedHex to extreme (0 or 100) doesn't work,
+        // it means originalCompanion is too mid-toned. We vary the companion to pass 7.0 against extremeSuggHex.
+        const compHsl = hexToHsl(originalCompanion);
+        let extremeL = suggHsl[2] > 50 ? 0 : 100;
+        const extremeSuggHex = hslToHex(suggHsl[0], suggHsl[1], extremeL);
+
+        let bestCompanionHex = originalCompanion;
+        let compFound = false;
+        let compMinDiff = 999;
+
+        for (let cl = 0; cl <= 100; cl += 1) {
+          const compCandidate = hslToHex(compHsl[0], compHsl[1], cl);
+          const r = parseFloat(contrastRatio(isFgFix ? extremeSuggHex : compCandidate, isFgFix ? compCandidate : extremeSuggHex));
+          if (r >= 7.0) {
+            const diff = Math.abs(cl - compHsl[2]);
+            if (diff < compMinDiff) {
+              compMinDiff = diff;
+              bestCompanionHex = compCandidate;
+              compFound = true;
+            }
+          }
+        }
+
+        if (compFound) {
+          return { suggestedHex: extremeSuggHex, companionHex: bestCompanionHex };
+        }
+
+        // Ultimate fallback: High-contrast pair matching respective hues
+        const finalSugg = suggHsl[2] > 50 ? '#000000' : '#ffffff';
+        const finalComp = suggHsl[2] > 50 ? '#ffffff' : '#000000';
+        return { suggestedHex: finalSugg, companionHex: finalComp };
       }
 
       // -------------------------------------------------------------
@@ -1151,6 +1188,17 @@ Return ONLY a valid JSON object. No explanation, no markdown, no backticks.
 
 
       function renderSuggestions(data, originalFg, originalBg) {
+        // Double-check if the user has changed the inputs in the meantime.
+        // If so, discard stale suggestions to prevent random switching/flickering!
+        const currentFg = expandShorthand(document.getElementById('fg-hex').value.trim()).toUpperCase();
+        const currentBg = expandShorthand(document.getElementById('bg-hex').value.trim()).toUpperCase();
+        
+        if (expandShorthand(originalFg).toUpperCase() !== currentFg || 
+            expandShorthand(originalBg).toUpperCase() !== currentBg) {
+          console.log("Stale callback discarded to prevent switching.");
+          return;
+        }
+
         const fgRow = document.getElementById('fg-fixes-row');
         const bgRow = document.getElementById('bg-fixes-row');
 
@@ -1168,30 +1216,35 @@ Return ONLY a valid JSON object. No explanation, no markdown, no backticks.
         }
 
         fgFixes.forEach(hex => {
-          const correctedHex = correctHexIfNeeded(hex, originalBg, true);
-          fgRow.appendChild(createSuggestionCard(correctedHex, originalBg, true));
+          const pair = getCorrectedPair(hex, originalBg, true);
+          const r = parseFloat(contrastRatio(pair.suggestedHex, pair.companionHex));
+          if (r >= 7.0) {
+            fgRow.appendChild(createSuggestionCard(pair.suggestedHex, pair.companionHex, true));
+          }
         });
 
         bgFixes.forEach(hex => {
-          const correctedHex = correctHexIfNeeded(hex, originalFg, false);
-          bgRow.appendChild(createSuggestionCard(correctedHex, originalFg, false));
+          const pair = getCorrectedPair(hex, originalFg, false);
+          const r = parseFloat(contrastRatio(pair.companionHex, pair.suggestedHex));
+          if (r >= 7.0) {
+            bgRow.appendChild(createSuggestionCard(pair.suggestedHex, pair.companionHex, false));
+          }
         });
       }
 
-      function createSuggestionCard(suggestedHex, originalCompanion, isFgFix) {
+      function createSuggestionCard(suggestedHex, companionHex, isFgFix) {
         if (!suggestedHex.startsWith('#')) suggestedHex = '#' + suggestedHex;
-        
-        // Strict format validation check
         if (!/^[0-9A-Fa-f]{6}$/.test(suggestedHex.slice(1))) {
           suggestedHex = '#777777'; 
         }
+        if (!companionHex.startsWith('#')) companionHex = '#' + companionHex;
 
         // Locally compute and verify the suggested contrast ratio
-        const ratio = parseFloat(contrastRatio(suggestedHex, originalCompanion));
-        const passes = ratio >= 4.5;
+        const ratio = parseFloat(contrastRatio(suggestedHex, companionHex));
+        const passes = ratio >= 7.0;
 
-        const swatchBg = isFgFix ? originalCompanion : suggestedHex;
-        const swatchFg = isFgFix ? suggestedHex : originalCompanion;
+        const swatchBg = isFgFix ? companionHex : suggestedHex;
+        const swatchFg = isFgFix ? suggestedHex : companionHex;
 
         const badgeClass = passes ? 'badge-mini badge-mini-pass' : 'badge-mini badge-mini-warning';
         const badgeLabel = passes ? `${ratio}:1` : `⚠️ ${ratio}:1 !`;
@@ -1199,7 +1252,7 @@ Return ONLY a valid JSON object. No explanation, no markdown, no backticks.
         const card = document.createElement('div');
         card.className = 'suggestion-card';
         card.innerHTML = `
-          <div class="swatch-rect" style="background-color: ${swatchBg}; color: ${swatchFg};" onclick="applySuggestedColor('${suggestedHex}', ${isFgFix})" title="Click to apply color">
+          <div class="swatch-rect" style="background-color: ${swatchBg}; color: ${swatchFg};" onclick="applySuggestedColor('${suggestedHex}', ${isFgFix}, '${companionHex}')" title="Click to apply color">
             Aa
           </div>
           <div class="card-hex-row">
@@ -1208,19 +1261,25 @@ Return ONLY a valid JSON object. No explanation, no markdown, no backticks.
             </span>
             <span class="${badgeClass}">${badgeLabel}</span>
           </div>
-          <button class="apply-btn" onclick="applySuggestedColor('${suggestedHex}', ${isFgFix})">Apply</button>
+          <button class="apply-btn" onclick="applySuggestedColor('${suggestedHex}', ${isFgFix}, '${companionHex}')">Apply</button>
         `;
         return card;
       }
 
-      window.applySuggestedColor = function(hex, isFgFix) {
+      window.applySuggestedColor = function(hex, isFgFix, companionHex) {
         if (isFgFix) {
           document.getElementById('fg-hex').value = hex.toUpperCase();
+          if (companionHex) {
+            document.getElementById('bg-hex').value = companionHex.toUpperCase();
+          }
         } else {
           document.getElementById('bg-hex').value = hex.toUpperCase();
+          if (companionHex) {
+            document.getElementById('fg-hex').value = companionHex.toUpperCase();
+          }
         }
         updateWCAGResults();
-        showToast(`Applied color ${hex} successfully!`);
+        showToast(`Applied color scheme successfully!`);
       }
 
       window.copyToClipboard = function(text) {
