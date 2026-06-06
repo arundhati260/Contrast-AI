@@ -1,0 +1,6 @@
+{
+  "name": "ContrastAI",
+  "description": "A WCAG contrast ratio checker with AI-powered color fix suggestions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
